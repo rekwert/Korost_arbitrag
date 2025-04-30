@@ -8,8 +8,8 @@ from config import (
     BYBIT_EXCHANGE_NAME,
     BINANCE_EXCHANGE_NAME,
     MEXC_EXCHANGE_NAME,
-    # Добавь KuCoin/HTX позже
-    ARBITRAGE_THRESHOLD_PCT, # Перенесем порог сюда
+    KUCOIN_EXCHANGE_NAME,
+    ARBITRAGE_THRESHOLD_PCT,
 )
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,8 @@ latest_tickers: dict[str, dict[str, TickerData]] = {
     BYBIT_EXCHANGE_NAME: {},
     BINANCE_EXCHANGE_NAME: {},
     MEXC_EXCHANGE_NAME: {},
-    # Добавь сюда KuCoin/HTX по мере их реализации
+    KUCOIN_EXCHANGE_NAME: {},
+
 }
 
 # === Логика поиска арбитража ===

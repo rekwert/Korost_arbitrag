@@ -6,15 +6,16 @@ from config import (
     BYBIT_EXCHANGE_NAME,
     BINANCE_EXCHANGE_NAME,
     MEXC_EXCHANGE_NAME,
-    ARBITRAGE_THRESHOLD_PCT, # Порог теперь в config
-    # Добавь импорты имен для KuCoin/HTX позже
+    KUCOIN_EXCHANGE_NAME,
+    ARBITRAGE_THRESHOLD_PCT,
+
 )
 
 from exchange_clients.bybit_ws import bybit_client
 from exchange_clients.binance_ws import binance_client
 from exchange_clients.mexc_ws import mexc_client
-# from exchange_clients.kucoin_ws import kucoin_client # Для будущего
-# from exchange_clients.htx_ws import htx_client     # Для будущего
+from exchange_clients.kucoin_ws import kucoin_client
+# from exchange_clients.htx_ws import htx_client
 
 
 # --- Настройка Логгирования ---
@@ -40,19 +41,11 @@ async def main():
 
     # Задачи для запуска клиентов
     tasks = [
-        asyncio.create_task(
-            bybit_client(SYMBOLS_TO_TRACK),
-            name=f"{BYBIT_EXCHANGE_NAME}_client"
-        ),
-        asyncio.create_task(
-            binance_client(SYMBOLS_TO_TRACK),
-            name=f"{BINANCE_EXCHANGE_NAME}_client"
-        ),
-        asyncio.create_task(
-            mexc_client(SYMBOLS_TO_TRACK),
-            name=f"{MEXC_EXCHANGE_NAME}_client"
-        ),
-
+        asyncio.create_task(bybit_client(SYMBOLS_TO_TRACK), name=f"{BYBIT_EXCHANGE_NAME}_client"),
+        asyncio.create_task(binance_client(SYMBOLS_TO_TRACK), name=f"{BINANCE_EXCHANGE_NAME}_client"),
+        asyncio.create_task(mexc_client(SYMBOLS_TO_TRACK), name=f"{MEXC_EXCHANGE_NAME}_client"),
+        asyncio.create_task(kucoin_client(SYMBOLS_TO_TRACK), name=f"{KUCOIN_EXCHANGE_NAME}_client"),
+        # ... HTX ...
     ]
 
     logger.info(f"Запуск {len(tasks)} задач с помощью asyncio.gather...")

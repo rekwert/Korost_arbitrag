@@ -11,6 +11,7 @@ from config import (
     BYBIT_EXCHANGE_NAME,
     BYBIT_SPOT_PUBLIC_V5_ENDPOINT,
     BYBIT_ORDERBOOK_DEPTH,
+    SYMBOLS_TO_TRACK,
 )
 try:
     from shared_data import latest_tickers, find_arbitrage_opportunities
@@ -81,14 +82,6 @@ async def handle_bybit_messages(websocket: WebSocketClientProtocol):
                     continue
 
                 # Обработка ответа на подписку
-                if data.get("op") == "subscribe":
-                    if data.get("success"):
-                        logger.info(f"[{BYBIT_EXCHANGE_NAME}] Успешная подписка на args: {data.get('ret_msg')}")
-                    else:
-                        logger.warning(f"[{BYBIT_EXCHANGE_NAME}] Ошибка подписки: {data.get('ret_msg')}")
-                    continue
-
-                # Обработка данных стакана (orderbook)
                 if data.get("topic", "").startswith("orderbook.") and data.get("type") in ["snapshot", "delta"]:
                     orderbook_data = data.get("data", {})
                     symbol = orderbook_data.get("s")
@@ -97,8 +90,13 @@ async def handle_bybit_messages(websocket: WebSocketClientProtocol):
                         logger.warning(f"[{BYBIT_EXCHANGE_NAME}] Получены данные стакана без символа: {data}")
                         continue
 
+                    if symbol not in SYMBOLS_TO_TRACK:  # Добавим проверку
+                        logger.debug(f"[{BYBIT_EXCHANGE_NAME}] Пропуск не отслеживаемого символа: {symbol}")
+                        continue
+
                     best_ask_list = orderbook_data.get("a", [])
                     best_bid_list = orderbook_data.get("b", [])
+                    # Переменные называются best_ask_price / best_bid_price
                     best_ask_price = None
                     best_bid_price = None
 
@@ -106,28 +104,37 @@ async def handle_bybit_messages(websocket: WebSocketClientProtocol):
                         try:
                             best_ask_price = Decimal(best_ask_list[0][0])
                         except (IndexError, InvalidOperation, TypeError) as e:
-                            logger.warning(f"[{BYBIT_EXCHANGE_NAME}][{symbol}] Не удалось извлечь best ask: {e} из {best_ask_list}")
+                            logger.warning(
+                                f"[{BYBIT_EXCHANGE_NAME}][{symbol}] Не удалось извлечь best ask: {e} из {best_ask_list}")
                     if best_bid_list:
                         try:
                             best_bid_price = Decimal(best_bid_list[0][0])
                         except (IndexError, InvalidOperation, TypeError) as e:
-                            logger.warning(f"[{BYBIT_EXCHANGE_NAME}][{symbol}] Не удалось извлечь best bid: {e} из {best_bid_list}")
+                            logger.warning(
+                                f"[{BYBIT_EXCHANGE_NAME}][{symbol}] Не удалось извлечь best bid: {e} из {best_bid_list}")
 
-                    # Обновляем или создаем TickerData
-                    current_ticker = latest_tickers[BYBIT_EXCHANGE_NAME].get(symbol)
-                    if not current_ticker:
-                        current_ticker = TickerData(exchange=BYBIT_EXCHANGE_NAME, symbol=symbol, timestamp_ms=0)
+                    # === ИСПРАВЛЕННАЯ ЛОГИКА ОБНОВЛЕНИЯ ===
+                    # Получаем или создаем объект TickerData
+                    symbol_data = latest_tickers[BYBIT_EXCHANGE_NAME].setdefault(symbol, None)
+                    if symbol_data is None:
+                        symbol_data = TickerData(exchange=BYBIT_EXCHANGE_NAME, symbol=symbol, timestamp_ms=0)
+                        latest_tickers[BYBIT_EXCHANGE_NAME][symbol] = symbol_data
 
-                    # Обновляем данные
-                    current_ticker.timestamp_ms = int(data.get("ts", 0))
-                    current_ticker.bid_price = best_bid_price
-                    current_ticker.ask_price = best_ask_price
+                    # Обновляем поля объекта
+                    symbol_data.timestamp_ms = int(data.get("ts", 0))
+                    symbol_data.bid_price = best_bid_price  # Имя переменной здесь best_bid_price
+                    symbol_data.ask_price = best_ask_price  # Имя переменной здесь best_ask_price
+                    # last_price из стакана не получаем
+                    # symbol_data.last_price = None # Опционально
 
-                    latest_tickers[BYBIT_EXCHANGE_NAME][symbol] = current_ticker
-                    logger.debug(f"[{BYBIT_EXCHANGE_NAME}] Обновлен стакан [{symbol}]: B:{best_bid_price} A:{best_ask_price}")
+                    logger.debug(
+                        f"[{BYBIT_EXCHANGE_NAME}] Обновлен стакан [{symbol}]: "
+                        f"B:{best_bid_price} A:{best_ask_price}"  # Логируем правильные переменные
+                    )
 
-                    # Вызываем функцию сравнения после обновления
                     find_arbitrage_opportunities()
+                    continue  # Сообщение обработано
+                    # === КОНЕЦ ИСПРАВЛЕНИЯ ===
 
                 else:
                     logger.debug(f"[{BYBIT_EXCHANGE_NAME}] Получено необрабатываемое сообщение: {data}")

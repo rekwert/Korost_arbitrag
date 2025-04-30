@@ -87,45 +87,46 @@ async def handle_mexc_messages(websocket: WebSocketClientProtocol):
                 # Документация: https://mexcdevelop.github.io/apidocs/spot_v3_en/#individual-symbol-book-ticker-streams
                 # Формат: {"c": channel, "d": {"b": bid_price, "B": bid_qty, "a": ask_price, "A": ask_qty}, "s": symbol, "t": timestamp}
                 channel = data.get("c", "")
-                if channel.startswith("spot@public.bookTicker.v3.api@") and "d" in data: # <-- ИЗМЕНИЛИ ЗДЕСЬ
+                if channel.startswith("spot@public.bookTicker.v3.api@") and "d" in data:
                     ticker_data = data.get("d", {})
-                    symbol = data.get("s") # Символ теперь в корне объекта
+                    symbol = data.get("s")
 
                     if not symbol or symbol not in SYMBOLS_TO_TRACK:
-                        logger.debug(f"[{MEXC_EXCHANGE_NAME}] Пропуск не отслеживаемого/неполного тикера: {symbol}")
-                        continue
+                         logger.debug(f"[{MEXC_EXCHANGE_NAME}] Пропуск не отслеживаемого/неполного тикера: {symbol}")
+                         continue
 
+                    # Переменные называются best_ask_price / best_bid_price
                     best_ask_price = None
                     best_bid_price = None
 
                     try:
-                        # Извлекаем bid 'b' и ask 'a'
                         if ticker_data.get("b"):
                              best_bid_price = Decimal(ticker_data.get("b"))
                         if ticker_data.get("a"):
                              best_ask_price = Decimal(ticker_data.get("a"))
                     except (InvalidOperation, TypeError) as e:
                         logger.warning(f"[{MEXC_EXCHANGE_NAME}][{symbol}] Не удалось извлечь bid/ask: {e} из {ticker_data}")
-                        continue # Пропускаем, если цены невалидные
+                        continue
 
-                    # Обновляем или создаем TickerData
-                    timestamp_ms = int(data.get("t", 0)) # Время от MEXC
-                    ticker_obj = TickerData(
-                        exchange=MEXC_EXCHANGE_NAME,
-                        symbol=symbol,
-                        timestamp_ms=timestamp_ms,
-                        bid_price=best_bid_price,
-                        ask_price=best_ask_price,
-                        last_price=None # bookTicker обычно не содержит last price
-                    )
+                    # === ИСПРАВЛЕННАЯ ЛОГИКА ОБНОВЛЕНИЯ ===
+                    timestamp_ms = int(data.get("t", 0))
+                    # Получаем или создаем объект TickerData
+                    symbol_data = latest_tickers[MEXC_EXCHANGE_NAME].setdefault(symbol, None)
+                    if symbol_data is None:
+                        symbol_data = TickerData(exchange=MEXC_EXCHANGE_NAME, symbol=symbol, timestamp_ms=0)
+                        latest_tickers[MEXC_EXCHANGE_NAME][symbol] = symbol_data
 
-                    latest_tickers[MEXC_EXCHANGE_NAME][symbol] = ticker_obj
+                    # Обновляем поля объекта
+                    symbol_data.timestamp_ms = timestamp_ms
+                    symbol_data.bid_price = best_bid_price # Имя переменной здесь best_bid_price
+                    symbol_data.ask_price = best_ask_price # Имя переменной здесь best_ask_price
+                    symbol_data.last_price = None
+
                     logger.debug(
                         f"[{MEXC_EXCHANGE_NAME}] Обновлен bookTicker [{symbol}]: "
-                        f"B:{best_bid_price} A:{best_ask_price}"
+                        f"B:{best_bid_price} A:{best_ask_price}" # Логируем правильные переменные
                     )
 
-                    # Вызываем функцию сравнения после обновления
                     find_arbitrage_opportunities()
                     continue # Сообщение обработано
 

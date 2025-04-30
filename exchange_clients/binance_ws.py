@@ -71,36 +71,40 @@ async def handle_binance_messages(websocket: WebSocketClientProtocol):
                     continue
 
                 try:
+                    # Извлекаем цены в переменные bid_price и ask_price
                     bid_price = Decimal(stream_data.get("b")) if stream_data.get("b") else None
                     ask_price = Decimal(stream_data.get("a")) if stream_data.get("a") else None
-                    # Используем локальное время, т.к. bookTicker не содержит timestamp биржи
                     timestamp_ms = int(time.time() * 1000)
 
-                    # Обновляем или создаем TickerData
-                    ticker_obj = TickerData(
-                        exchange=BINANCE_EXCHANGE_NAME,
-                        symbol=symbol,
-                        timestamp_ms=timestamp_ms,
-                        bid_price=bid_price,
-                        ask_price=ask_price,
-                        last_price=None # bookTicker не содержит lastPrice
-                    )
+                    # Получаем или создаем объект TickerData
+                    symbol_data = latest_tickers[BINANCE_EXCHANGE_NAME].setdefault(symbol, None)
+                    if symbol_data is None:
+                        symbol_data = TickerData(exchange=BINANCE_EXCHANGE_NAME, symbol=symbol, timestamp_ms=0)
+                        latest_tickers[BINANCE_EXCHANGE_NAME][symbol] = symbol_data
 
-                    latest_tickers[BINANCE_EXCHANGE_NAME][symbol] = ticker_obj
+                    # === ИСПРАВЛЕНИЕ ЗДЕСЬ ===
+                    # Обновляем поля существующего объекта, используя ПРАВИЛЬНЫЕ имена переменных
+                    symbol_data.timestamp_ms = timestamp_ms
+                    symbol_data.bid_price = bid_price  # <-- ПРОВЕРЬ ЭТУ СТРОКУ
+                    symbol_data.ask_price = ask_price  # <-- ПРОВЕРЬ ЭТУ СТРОКУ
+                    symbol_data.last_price = None      # bookTicker не дает last_price
+
                     logger.debug(
                         f"[{BINANCE_EXCHANGE_NAME}] Обновлен стакан [{symbol}]: "
-                        f"B:{bid_price} A:{ask_price}"
+                        f"B:{bid_price} A:{ask_price}" # Используем bid_price и ask_price в логе
                     )
+                    # === КОНЕЦ ИСПРАВЛЕНИЯ ===
 
-                    # Вызываем функцию сравнения после обновления
+                    # Вызываем функцию сравнения
                     find_arbitrage_opportunities()
                     continue # Сообщение обработано
 
                 except (InvalidOperation, ValueError, TypeError) as e:
                     logger.warning(
                         f"[{BINANCE_EXCHANGE_NAME}][{symbol}] "
-                        f"Не удалось обработать данные bookTicker: {e} - Данные: {stream_data}"
+                        f"Не удалось обработать данные bookTicker (InvalidOperation/ValueError/TypeError): {e} - Данные: {stream_data}"
                     )
+
                 except Exception as e:
                      logger.error(
                          f"[{BINANCE_EXCHANGE_NAME}][{symbol}] Ошибка при создании TickerData: {e}",
