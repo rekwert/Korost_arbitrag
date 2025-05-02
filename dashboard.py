@@ -1,124 +1,147 @@
 # dashboard.py
-import streamlit as st
-import pandas as pd
-from datetime import datetime, timezone
-import time
-import requests
 import logging
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
-# Импортируем конфиг для списка символов и порога
+import numpy as np  # Добавляем numpy
+import pandas as pd
+import streamlit as st
+
 try:
     import config
+    import data_store
+    from models import TickerData
 except ModuleNotFoundError:
-    st.error("Ошибка: Не найден модуль config.py.")
+    st.error(
+        "Ошибка: Не найдены модули data_store.py, config.py или models.py."
+    )
     st.stop()
 
 from streamlit_autorefresh import st_autorefresh
 
 # --- Настройки ---
-API_URL = "http://localhost:9000/tickers" # URL API из main.py
-REFRESH_INTERVAL_SECONDS = 3 # Интервал обновления в секундах
-DECIMAL_PLACES_PRICE = 8 # Знаков после запятой для цен
-DECIMAL_PLACES_SPREAD = 4 # Знаков после запятой для спреда
+REFRESH_INTERVAL_SECONDS = 3
+DECIMAL_PLACES_PRICE = 8
+DECIMAL_PLACES_SPREAD = 4
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - DASHBOARD - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - DASHBOARD - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 # --- Настройки Streamlit ---
 st.set_page_config(
-    page_title="Арбитражный Монитор",
-    page_icon="🚀",
-    layout="wide",
+    page_title="Арбитражный Монитор", page_icon="🚀", layout="wide"
 )
 
-st.title("🚀 Арбитражный Монитор Криптовалютных Бирж")
+st.title("🚀 Арбитражный Монитор Криптовалютных Бирж (Redis)")
+
 
 # --- Получение данных ---
-
-@st.cache_data(ttl=REFRESH_INTERVAL_SECONDS - 0.5)
-def получить_данные_из_api(url: str) -> dict | None:
-    """Получает данные тикеров с API эндпоинта."""
-    logger.info(f"Запрос данных с API: {url}")
+def загрузить_данные_из_бд() -> dict | None:
+    logger.info("Загрузка данных из Redis...")
     try:
-        proxies = {"http": None, "https": None}
-        response = requests.get(url, timeout=1.5, proxies=proxies)
-        response.raise_for_status()
-        logger.info("Данные с API успешно получены.")
-        return response.json()
-    except requests.exceptions.Timeout:
-        logger.warning(f"Таймаут при запросе к API: {url}")
-        st.toast(f"⏳ Таймаут API {url}", icon="⚠️")
-    except requests.exceptions.ConnectionError:
-        logger.warning(f"Ошибка соединения с API: {url}. Убедитесь, что main.py запущен.")
-        st.toast(f"🔌 Ошибка соединения API {url}. Проверьте main.py.", icon="🚫")
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Ошибка при запросе к API {url}: {e}")
-        st.toast(f"🔥 Ошибка API: {e}", icon="❌")
-    except json.JSONDecodeError:
-         logger.error(f"Ошибка декодирования JSON от API: {url}")
-         st.toast("🤯 Ошибка: Неверный формат данных от API.", icon="🤷")
-    return None
+        exchanges_to_load = [
+            config.BYBIT_EXCHANGE_NAME,
+            config.BINANCE_EXCHANGE_NAME,
+            config.MEXC_EXCHANGE_NAME,
+            config.KUCOIN_EXCHANGE_NAME,
+            # config.HTX_EXCHANGE_NAME, # HTX отключен
+        ]
+        data = data_store.get_all_tickers_sync(
+            exchanges_to_load, config.SYMBOLS_TO_TRACK
+        )
+        logger.info(f"Данные из Redis загружены. Ключей бирж: {len(data)}")
+        return data
+    except Exception as e:
+        logger.error(
+            f"Ошибка при вызове get_all_tickers_sync: {e}", exc_info=True
+        )
+        st.error(f"Ошибка загрузки данных из Redis: {e}")
+        return None
 
-api_данные = получить_данные_из_api(API_URL)
 
-if api_данные is None:
-    st.error("Не удалось получить данные от API. Проверьте работу `main.py` и доступность API.")
-    st.stop()
+актуальные_данные = загрузить_данные_из_бд()
 
-# Определяем доступные биржи и символы
-доступные_биржи = list(api_данные.keys())
-доступные_символы = config.SYMBOLS_TO_TRACK
+if актуальные_данные is None:
+    актуальные_данные = st.session_state.get("last_valid_db_data", None)
+    if актуальные_данные:
+        st.warning(
+            "Не удалось загрузить свежие данные из Redis. Отображаются последние доступные."
+        )
+    else:
+        st.error(
+            "Не удалось загрузить данные из Redis. Проверьте работу `main.py` и доступность Redis."
+        )
+        st.stop()
+else:
+    st.session_state["last_valid_db_data"] = актуальные_данные
 
 # --- Фильтры ---
-st.sidebar.header("Фильтры")
-выбранные_символы = st.sidebar.multiselect(
-    "Выберите символы:",
-    options=доступные_символы,
-    default=доступные_символы
-)
+st.sidebar.header("Фильтры Отображения")
+доступные_биржи = sorted(list(актуальные_данные.keys()))
+доступные_символы = sorted(config.SYMBOLS_TO_TRACK)
 
+выбранные_символы = st.sidebar.multiselect(
+    "Символы:", options=доступные_символы, default=доступные_символы
+)
 выбранные_биржи = st.sidebar.multiselect(
-    "Выберите биржи:",
-    options=доступные_биржи,
-    default=доступные_биржи
+    "Биржи:", options=доступные_биржи, default=доступные_биржи
 )
 
 if not выбранные_символы:
     выбранные_символы = доступные_символы
-if not выбранные_биржи:
+if not выбранные_биржи or len(выбранные_биржи) < 2:
     выбранные_биржи = доступные_биржи
+    if len(выбранные_биржи) < 2:
+        st.sidebar.warning("Для расчета спредов нужно выбрать минимум 2 биржи.")
+
 
 # --- Расчеты ---
-def рассчитать_спреды(данные: dict, символы: list[str], биржи: list[str], порог: Decimal):
-    """Рассчитывает спреды и находит арбитражные возможности."""
-    все_спреды = {} # {символ: { 'Биржа1 -> Биржа2': спред_%, ... } }
-    возможности = [] # Список найденных ситуаций
+def рассчитать_спреды(
+    данные: dict, символы: list[str], биржи: list[str], порог: Decimal
+):
+    все_спреды = {}
+    возможности = []
+    try:
+        порог_decimal = Decimal(str(порог))
+    except (InvalidOperation, TypeError):
+        logger.error(
+            f"Неверное значение порога арбитража: {порог}. Использую 0.1."
+        )
+        порог_decimal = Decimal("0.1")
 
     for символ in символы:
         все_спреды[символ] = {}
         данные_по_символу = {}
         валидные_биржи_для_символа = []
 
-        # Собираем валидные данные
         for имя_биржи in биржи:
+            if имя_биржи not in данные:
+                continue
             инфо_тикера = данные.get(имя_биржи, {}).get(символ)
             try:
-                if инфо_тикера and инфо_тикера.get("bid_price") and инфо_тикера.get("ask_price"):
-                    цена_покупки = Decimal(инфо_тикера["bid_price"]) # Цена, по которой мы можем ПРОДАТЬ (кто-то покупает)
-                    цена_продажи = Decimal(инфо_тикера["ask_price"]) # Цена, по которой мы можем КУПИТЬ (кто-то продает)
-                    время_мс = инфо_тикера.get("timestamp_ms", 0)
-                    if цена_покупки > 0 and цена_продажи > 0:
-                         данные_по_символу[имя_биржи] = {"bid": цена_покупки, "ask": цена_продажи, "ts": время_мс}
-                         валидные_биржи_для_символа.append(имя_биржи)
-            except (InvalidOperation, TypeError, ValueError) as e:
-                 logger.warning(f"Ошибка конвертации Decimal для {имя_биржи}/{символ}: {e} - {инфо_тикера}")
-                 continue
+                if (
+                    isinstance(инфо_тикера, TickerData)
+                    and инфо_тикера.bid_price is not None # Проверяем не None
+                    and инфо_тикера.ask_price is not None # Проверяем не None
+                ):
+                    if инфо_тикера.bid_price > 0 and инфо_тикера.ask_price > 0:
+                        данные_по_символу[имя_биржи] = {
+                            "bid": инфо_тикера.bid_price,
+                            "ask": инфо_тикера.ask_price,
+                            "ts": инфо_тикера.timestamp_ms,
+                        }
+                        валидные_биржи_для_символа.append(имя_биржи)
+            except Exception as e:
+                logger.warning(
+                    f"Ошибка обработки тикера для {имя_биржи}/{символ} в рассчитать_спреды: {e}"
+                )
+                continue
 
         if len(валидные_биржи_для_символа) < 2:
             continue
 
-        # Сравниваем пары
         for i in range(len(валидные_биржи_для_символа)):
             for j in range(i + 1, len(валидные_биржи_для_символа)):
                 биржа1_имя = валидные_биржи_для_символа[i]
@@ -126,147 +149,227 @@ def рассчитать_спреды(данные: dict, символы: list[s
                 тикер1 = данные_по_символу[биржа1_имя]
                 тикер2 = данные_по_символу[биржа2_имя]
 
-                # Запрашиваемая цена (Ask) - цена, по которой покупаем
-                # Предлагаемая цена (Bid) - цена, по которой продаем
                 ask1 = тикер1["ask"]
                 bid1 = тикер1["bid"]
                 ask2 = тикер2["ask"]
                 bid2 = тикер2["bid"]
 
-                # 1. Купить на Биржа1 (по ask1), Продать на Биржа2 (по bid2)
-                профит_1_2_проц = Decimal('0')
-                if ask1 > 0:
-                    профит_1_2_проц = ((bid2 - ask1) / ask1) * 100
+                профит_1_2_проц = (
+                    ((bid2 - ask1) / ask1) * 100 if ask1 > 0 else Decimal("-inf")
+                )
+                профит_2_1_проц = (
+                    ((bid1 - ask2) / ask2) * 100 if ask2 > 0 else Decimal("-inf")
+                )
 
-                # 2. Купить на Биржа2 (по ask2), Продать на Биржа1 (по bid1)
-                профит_2_1_проц = Decimal('0')
-                if ask2 > 0:
-                    профит_2_1_проц = ((bid1 - ask2) / ask2) * 100
-
-                # Сохраняем спреды
                 ключ_пары_1_2 = f"{биржа1_имя} -> {биржа2_имя}"
                 ключ_пары_2_1 = f"{биржа2_имя} -> {биржа1_имя}"
+                # Сохраняем как Decimal для стилизации
                 все_спреды[символ][ключ_пары_1_2] = профит_1_2_проц
                 все_спреды[символ][ключ_пары_2_1] = профит_2_1_проц
 
-                # Проверяем на арбитраж
-                if профит_1_2_проц >= порог:
-                    возможности.append({
-                        "символ": символ,
-                        "купить_биржа": биржа1_имя,
-                        "купить_цена": ask1,
-                        "продать_биржа": биржа2_имя,
-                        "продать_цена": bid2,
-                        "спред_проц": профит_1_2_проц
-                    })
-                if профит_2_1_проц >= порог:
-                     возможности.append({
-                         "символ": символ,
-                         "купить_биржа": биржа2_имя,
-                         "купить_цена": ask2,
-                         "продать_биржа": биржа1_имя,
-                         "продать_цена": bid1,
-                         "спред_проц": профит_2_1_проц
-                     })
+                if профит_1_2_проц >= порог_decimal:
+                    возможности.append(
+                        {
+                            "символ": символ,
+                            "купить_биржа": биржа1_имя,
+                            "купить_цена": ask1,
+                            "продать_биржа": биржа2_имя,
+                            "продать_цена": bid2,
+                            "спред_проц": профит_1_2_проц,
+                        }
+                    )
+                if профит_2_1_проц >= порог_decimal:
+                    возможности.append(
+                        {
+                            "символ": символ,
+                            "купить_биржа": биржа2_имя,
+                            "купить_цена": ask2,
+                            "продать_биржа": биржа1_имя,
+                            "продать_цена": bid1,
+                            "спред_проц": профит_2_1_проц,
+                        }
+                    )
 
     return все_спреды, возможности
 
-# --- Выполняем расчеты ---
+
 рассчитанные_спреды, арбитражные_ситуации = рассчитать_спреды(
-    api_данные,
+    актуальные_данные,
     выбранные_символы,
     выбранные_биржи,
-    config.ARBITRAGE_THRESHOLD_PCT
+    config.ARBITRAGE_THRESHOLD_PCT,
 )
 
 # --- Отображение основной таблицы цен ---
 st.subheader("Текущие цены (Bid/Ask)")
-
 список_цен_для_таблицы = []
 текущее_время_utc = datetime.now(timezone.utc)
 
-for символ in выбранные_символы:
-    данные_строки = {'Символ': символ}
-    for имя_биржи in выбранные_биржи:
-        инфо_тикера = api_данные.get(имя_биржи, {}).get(символ)
-        if инфо_тикера and isinstance(инфо_тикера, dict):
-            # Bid (Предложение) - лучшая цена, по которой кто-то готов купить (мы можем продать)
-            # Ask (Запрос) - лучшая цена, по которой кто-то готов продать (мы можем купить)
-            bid_строка = инфо_тикера.get("bid_price", "N/A") or "N/A"
-            ask_строка = инфо_тикера.get("ask_price", "N/A") or "N/A"
-            данные_строки[f'{имя_биржи} Предложение (Bid)'] = bid_строка # Изменили заголовок
-            данные_строки[f'{имя_биржи} Запрос (Ask)'] = ask_строка       # Изменили заголовок
+# Заранее определяем порядок колонок
+columns_order = ["Символ"]
+for имя_биржи in выбранные_биржи:
+    columns_order.extend(
+        [
+            f"{имя_биржи} Предложение (Bid)",
+            f"{имя_биржи} Запрос (Ask)",
+            f"{имя_биржи} Обновлено (сек)",
+        ]
+    )
 
-            время_мс = инфо_тикера.get("timestamp_ms")
-            if время_мс and isinstance(время_мс, int) and время_мс > 0:
-                 try:
-                     объект_времени = datetime.fromtimestamp(время_мс / 1000, timezone.utc)
-                     разница_времени = текущее_время_utc - объект_времени
-                     данные_строки[f'{имя_биржи} Обновлено (сек)'] = f"{разница_времени.total_seconds():.1f}" # Убрали "назад"
-                 except Exception:
-                     данные_строки[f'{имя_биржи} Обновлено (сек)'] = "Ошибка"
+for символ in выбранные_символы:
+    данные_строки = {"Символ": символ}
+    for имя_биржи in выбранные_биржи:
+        инфо_тикера = актуальные_данные.get(имя_биржи, {}).get(символ)
+        bid_col = f"{имя_биржи} Предложение (Bid)"
+        ask_col = f"{имя_биржи} Запрос (Ask)"
+        ts_col = f"{имя_биржи} Обновлено (сек)"
+        if isinstance(инфо_тикера, TickerData):
+            данные_строки[bid_col] = (
+                f"{инфо_тикера.bid_price:.{DECIMAL_PLACES_PRICE}f}"
+                if инфо_тикера.bid_price is not None
+                else "N/A"
+            )
+            данные_строки[ask_col] = (
+                f"{инфо_тикера.ask_price:.{DECIMAL_PLACES_PRICE}f}"
+                if инфо_тикера.ask_price is not None
+                else "N/A"
+            )
+            if инфо_тикера.timestamp_ms and инфо_тикера.timestamp_ms > 0:
+                try:
+                    объект_времени = datetime.fromtimestamp(
+                        инфо_тикера.timestamp_ms / 1000, timezone.utc
+                    )
+                    разница_времени = текущее_время_utc - объект_времени
+                    данные_строки[ts_col] = f"{разница_времени.total_seconds():.1f}"
+                except Exception:
+                    данные_строки[ts_col] = "Ошибка"
             else:
-                данные_строки[f'{имя_биржи} Обновлено (сек)'] = "N/A"
+                данные_строки[ts_col] = "N/A"
         else:
-            данные_строки[f'{имя_биржи} Предложение (Bid)'] = "N/A"
-            данные_строки[f'{имя_биржи} Запрос (Ask)'] = "N/A"
-            данные_строки[f'{имя_биржи} Обновлено (сек)'] = "N/A"
+            данные_строки[bid_col] = "N/A"
+            данные_строки[ask_col] = "N/A"
+            данные_строки[ts_col] = "N/A"
     список_цен_для_таблицы.append(данные_строки)
 
 if список_цен_для_таблицы:
-    df_цены = pd.DataFrame(список_цен_для_таблицы).set_index('Символ')
+    df_цены = pd.DataFrame(список_цен_для_таблицы, columns=columns_order).set_index(
+        "Символ"
+    )
     st.dataframe(df_цены, use_container_width=True)
 else:
-    st.info("Нет данных для отображения с учетом выбранных фильтров.")
+    st.info("Нет данных цен для отображения с учетом выбранных фильтров.")
 
-# --- Отображение таблицы спредов ---
+
+# --- Отображение таблицы спредов с подсветкой ---
 st.subheader("Рассчитанные спреды (%)")
-
 список_спредов_для_таблицы = []
-все_ключи_пар = set()
-for спреды_символа in рассчитанные_спреды.values():
-    все_ключи_пар.update(спреды_символа.keys())
-отсортированные_ключи_пар = sorted(list(все_ключи_пар))
+все_ключи_пар_выбранных = set()
 
+if len(выбранные_биржи) >= 2:
+    for i in range(len(выбранные_биржи)):
+        for j in range(i + 1, len(выбранные_биржи)):
+            ex1 = выбранные_биржи[i]
+            ex2 = выбранные_биржи[j]
+            все_ключи_пар_выбранных.add(f"{ex1} -> {ex2}")
+            все_ключи_пар_выбранных.add(f"{ex2} -> {ex1}")
+отсортированные_ключи_пар = sorted(list(все_ключи_пар_выбранных))
+
+# Собираем данные для DataFrame, оставляя числа как Decimal
+data_for_styling = []
 for символ in выбранные_символы:
-    if символ in рассчитанные_спреды:
-        данные_строки = {'Символ': символ}
+    if символ in рассчитанные_спреды and рассчитанные_спреды[символ]:
+        данные_строки = {"Символ": символ}
         спреды_символа = рассчитанные_спреды[символ]
         for ключ_пары in отсортированные_ключи_пар:
-             спред_проц = спреды_символа.get(ключ_пары)
-             данные_строки[ключ_пары] = f"{спред_проц:.{DECIMAL_PLACES_SPREAD}f}%" if спред_проц is not None else "N/A"
-        список_спредов_для_таблицы.append(данные_строки)
+            спред_проц = спреды_символа.get(ключ_пары)
+            # Оставляем Decimal или None для стилизации
+            данные_строки[ключ_пары] = (
+                спред_проц if спред_проц != Decimal("-inf") else None
+            )
+        data_for_styling.append(данные_строки)
 
-if список_спредов_для_таблицы:
-    df_спреды = pd.DataFrame(список_спредов_для_таблицы).set_index('Символ')
-    st.dataframe(df_спреды, use_container_width=True)
+if data_for_styling:
+    df_спреды_стиль = pd.DataFrame(data_for_styling).set_index("Символ")
+
+
+    def color_spread_styler(val):
+        """Красит фон: >= порога - зеленый, >= 0 - желтый, < 0 - красный."""
+        color = 'white'  # Цвет по умолчанию для не-чисел
+        text_color = 'black'
+        try:
+            # Проверяем, что это Decimal перед сравнением
+            if isinstance(val, Decimal):
+                # Сначала проверяем на порог арбитража
+                if val >= config.ARBITRAGE_THRESHOLD_PCT:
+                    color = 'lightgreen'
+                    text_color = 'black'
+                # Затем проверяем на НЕОТРИЦАТЕЛЬНОСТЬ (>= 0)
+                elif val >= 0:  # <--- ИЗМЕНЕНИЕ ЗДЕСЬ (было > 0)
+                    color = 'lightyellow'
+                    text_color = 'black'
+                # Иначе (если строго < 0)
+                elif val < 0:
+                    color = 'lightcoral'
+                    text_color = 'white'
+                # Неявный else: если не Decimal, остается 'white'/'black'
+        except Exception as e:
+            # На случай непредвиденных ошибок сравнения
+            logger.error(f"Ошибка в color_spread_styler для значения {val}: {e}")
+            pass  # Оставляем цвет по умолчанию
+
+        return f'background-color: {color}; color: {text_color}'
+
+    # Применяем стиль и форматирование
+    st.dataframe(
+        df_спреды_стиль.style.apply(
+            lambda x: x.map(color_spread_styler), # Используем apply с map
+            subset=отсортированные_ключи_пар
+        ).format(
+            "{:." + str(DECIMAL_PLACES_SPREAD) + "f}%", # Форматируем как процент
+            subset=отсортированные_ключи_пар,
+            na_rep="N/A", # Представление для None/NaN
+        ),
+        use_container_width=True,
+    )
+
 else:
-     st.info("Нет данных для расчета спредов с учетом выбранных фильтров.")
+    st.info("Нет данных спредов для отображения с учетом выбранных фильтров.")
+
 
 # --- Отображение арбитражных ситуаций ---
-st.subheader(f"Найденные арбитражные ситуации (спред >= {config.ARBITRAGE_THRESHOLD_PCT}%)")
+st.subheader(
+    f"Найденные арбитражные ситуации (спред >= {config.ARBITRAGE_THRESHOLD_PCT}%)"
+)
+отфильтрованные_ситуации = [
+    опция
+    for опция in арбитражные_ситуации
+    if опция["символ"] in выбранные_символы
+    and опция["купить_биржа"] in выбранные_биржи
+    and опция["продать_биржа"] in выбранные_биржи
+]
 
-if арбитражные_ситуации:
-    # Сортируем по убыванию спреда для наглядности
-    арбитражные_ситуации.sort(key=lambda x: x['спред_проц'], reverse=True)
-
-    for ситуация in арбитражные_ситуации:
-        # Форматируем цены
+if отфильтрованные_ситуации:
+    отфильтрованные_ситуации.sort(key=lambda x: x["спред_проц"], reverse=True)
+    for ситуация in отфильтрованные_ситуации:
         цена_покупки_стр = f"{ситуация['купить_цена']:.{DECIMAL_PLACES_PRICE}f}"
         цена_продажи_стр = f"{ситуация['продать_цена']:.{DECIMAL_PLACES_PRICE}f}"
         спред_стр = f"{ситуация['спред_проц']:.{DECIMAL_PLACES_SPREAD}f}%"
-
         st.success(
             f"**{ситуация['символ']}**: Купить **{ситуация['купить_биржа']}** @ {цена_покупки_стр} "
             f"➡️ Продать **{ситуация['продать_биржа']}** @ {цена_продажи_стр}. "
             f"**Спред: {спред_стр}**"
         )
 else:
-    st.info(f"Арбитражных ситуаций с порогом >= {config.ARBITRAGE_THRESHOLD_PCT}% не найдено.")
-
+    st.info(
+        f"Арбитражных ситуаций с порогом >= {config.ARBITRAGE_THRESHOLD_PCT}% для выбранных фильтров не найдено."
+    )
 
 # --- Время обновления ---
-st.caption(f"Дашборд обновлен: {текущее_время_utc.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+st.caption(
+    f"Дашборд обновлен: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')}"
+)
 
 # --- Запуск автообновления ---
-st_autorefresh(interval=REFRESH_INTERVAL_SECONDS * 1000, key="обновлятор_данных")
+st_autorefresh(
+    interval=REFRESH_INTERVAL_SECONDS * 1000, key="обновлятор_данных"
+)
