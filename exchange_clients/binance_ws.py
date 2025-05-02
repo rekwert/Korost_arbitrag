@@ -1,40 +1,26 @@
+# exchange_clients/binance_ws.py
 import asyncio
 import json
 import logging
 import time
 from decimal import Decimal, InvalidOperation
-
-# Third-Party Libraries
+import data_store
 import websockets
-# Импорт для тайп-хинтинга
 from websockets.client import WebSocketClientProtocol
 
-# Local Application/Library Imports
 from models import TickerData
 from config import (
     BINANCE_EXCHANGE_NAME,
     BINANCE_SPOT_STREAM_ENDPOINT,
-    SYMBOLS_TO_TRACK, # Нужен для проверки символа
+    SYMBOLS_TO_TRACK,
 )
-# Import shared state and logic
-try:
-    from shared_data import latest_tickers, find_arbitrage_opportunities
-except ImportError:
-    print("Не удалось импортировать latest_tickers/find_arbitrage_opportunities из __main__")
-    latest_tickers = {}
-    def find_arbitrage_opportunities(): pass
 
-# Initialize logger for this module
+
 logger = logging.getLogger(__name__)
 
 
-# Функция subscribe_binance НЕ НУЖНА при подписке через URL, её можно удалить
-
-
 async def handle_binance_messages(websocket: WebSocketClientProtocol):
-    """
-    Обрабатывает сообщения от WebSocket Binance (bookTicker).
-    """
+    """Обрабатывает сообщения от WebSocket Binance (bookTicker)."""
     logger.info(f"[{BINANCE_EXCHANGE_NAME}] Запуск обработчика сообщений...")
     try:
         async for message in websocket:
@@ -42,69 +28,64 @@ async def handle_binance_messages(websocket: WebSocketClientProtocol):
                 data = json.loads(message)
                 logger.debug(f"[{BINANCE_EXCHANGE_NAME}] Получено raw сообщение: {data}")
 
-                # Binance @bookTicker не требует ping/pong и не шлет явных ответов на подписку по URL
-                # Определяем, комбинированный это поток или одиночный
                 stream_data = None
                 stream_name = None
-                if isinstance(data, dict) and "stream" in data and "data" in data: # Комбинированный поток
+                if isinstance(data, dict) and "stream" in data and "data" in data:
                     stream_data = data.get("data", {})
                     stream_name = data.get("stream", "")
-                elif isinstance(data, dict) and 's' in data and 'b' in data and 'a' in data: # Одиночный поток
+                elif isinstance(data, dict) and 's' in data and 'b' in data and 'a' in data:
                     stream_data = data
-                    # Восстанавливаем имя потока (не критично, но для полноты)
                     stream_name = stream_data.get('s','').lower() + "@bookTicker"
                 else:
                     logger.debug(f"[{BINANCE_EXCHANGE_NAME}] Получено необрабатываемое сообщение: {data}")
                     continue
 
-                # Проверяем, что это сообщение с данными bookTicker
                 if "@bookTicker" not in stream_name:
                     logger.debug(f"[{BINANCE_EXCHANGE_NAME}] Сообщение не из bookTicker потока: {stream_name}")
                     continue
 
-                symbol = stream_data.get("s") # 'BTCUSDT'
+                symbol = stream_data.get("s")
                 if not symbol or symbol not in SYMBOLS_TO_TRACK:
-                    logger.debug(f"[{BINANCE_EXCHANGE_NAME}] Пропуск не отслеживаемого/неполного тикера: {symbol}")
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"[{BINANCE_EXCHANGE_NAME}] Пропуск не отслеживаемого/неполного тикера: {symbol}")
                     continue
 
                 try:
-                    # Извлекаем цены в переменные bid_price и ask_price
                     bid_price = Decimal(stream_data.get("b")) if stream_data.get("b") else None
                     ask_price = Decimal(stream_data.get("a")) if stream_data.get("a") else None
-                    timestamp_ms = int(time.time() * 1000)
+                    timestamp_ms = int(time.time() * 1000) # Локальное время
 
-                    # Получаем или создаем объект TickerData
-                    symbol_data = latest_tickers[BINANCE_EXCHANGE_NAME].setdefault(symbol, None)
-                    if symbol_data is None:
-                        symbol_data = TickerData(exchange=BINANCE_EXCHANGE_NAME, symbol=symbol, timestamp_ms=0)
-                        latest_tickers[BINANCE_EXCHANGE_NAME][symbol] = symbol_data
+                    if bid_price is None or ask_price is None:
+                         logger.warning(f"[{BINANCE_EXCHANGE_NAME}][{symbol}] Отсутствуют bid/ask в данных bookTicker: {stream_data}")
+                         continue
 
-                    # === ИСПРАВЛЕНИЕ ЗДЕСЬ ===
-                    # Обновляем поля существующего объекта, используя ПРАВИЛЬНЫЕ имена переменных
-                    symbol_data.timestamp_ms = timestamp_ms
-                    symbol_data.bid_price = bid_price  # <-- ПРОВЕРЬ ЭТУ СТРОКУ
-                    symbol_data.ask_price = ask_price  # <-- ПРОВЕРЬ ЭТУ СТРОКУ
-                    symbol_data.last_price = None      # bookTicker не дает last_price
+                    # Создаем объект TickerData
+                    ticker_obj = TickerData(
+                        exchange=BINANCE_EXCHANGE_NAME,
+                        symbol=symbol,
+                        timestamp_ms=timestamp_ms,
+                        bid_price=bid_price,
+                        ask_price=ask_price,
+                        last_price=None
+                    )
+
+                    # Отправляем в Redis
+                    await data_store.update_ticker_in_redis(ticker_obj)
 
                     logger.debug(
                         f"[{BINANCE_EXCHANGE_NAME}] Обновлен стакан [{symbol}]: "
-                        f"B:{bid_price} A:{ask_price}" # Используем bid_price и ask_price в логе
+                        f"B:{bid_price} A:{ask_price}"
                     )
-                    # === КОНЕЦ ИСПРАВЛЕНИЯ ===
-
-                    # Вызываем функцию сравнения
-                    find_arbitrage_opportunities()
-                    continue # Сообщение обработано
+                    continue
 
                 except (InvalidOperation, ValueError, TypeError) as e:
                     logger.warning(
                         f"[{BINANCE_EXCHANGE_NAME}][{symbol}] "
-                        f"Не удалось обработать данные bookTicker (InvalidOperation/ValueError/TypeError): {e} - Данные: {stream_data}"
+                        f"Ошибка обработки данных bookTicker: {e} - Данные: {stream_data}"
                     )
-
-                except Exception as e:
+                except Exception as e_inner:
                      logger.error(
-                         f"[{BINANCE_EXCHANGE_NAME}][{symbol}] Ошибка при создании TickerData: {e}",
+                         f"[{BINANCE_EXCHANGE_NAME}][{symbol}] Ошибка при обработке тикера: {e_inner}",
                          exc_info=True
                      )
 
@@ -115,7 +96,7 @@ async def handle_binance_messages(websocket: WebSocketClientProtocol):
 
     except websockets.exceptions.ConnectionClosed as e:
         logger.warning(
-            f"[{BINANCE_EXCHANGE_NAME}] Соединение закрыто в handle_messages: "
+            f"[{BINANCE_EXCHANGE_NAME}] Соединение закрыто: "
             f"Код={e.code}, Причина='{e.reason}'"
         )
     except Exception as e:
@@ -136,23 +117,20 @@ async def binance_client(symbols: list[str]):
     while True:
         try:
             logger.info(f"[{BINANCE_EXCHANGE_NAME}] Попытка подключения к {uri}...")
-            # Используем ping_interval для поддержания соединения
-            async with websockets.connect(uri, ping_interval=30, ping_timeout=20) as websocket:
-                logger.info(f"[{BINANCE_EXCHANGE_NAME}] WebSocket соединение установлено.")
-                await handle_binance_messages(websocket) # Эта функция будет работать, пока соединение активно
+            async with websockets.connect(
+                uri,
+                ping_interval=30, # Пингуем реже, т.к. поток активный
+                ping_timeout=20
+                ) as websocket:
+                logger.info(f"[{BINANCE_EXCHANGE_NAME}] WebSocket соединение установлено: {websocket.id}")
+                await handle_binance_messages(websocket)
 
-        except websockets.exceptions.ConnectionClosedOK as e: # Добавили 'as e'
-            logger.info(
-                f"[{BINANCE_EXCHANGE_NAME}] WebSocket соединение закрыто штатно. "
-                f"Код: {e.code}, Причина: {e.reason}"
-            )
-        except (websockets.exceptions.ConnectionClosedError, ConnectionRefusedError, OSError) as e:
-            logger.error(f"[{BINANCE_EXCHANGE_NAME}] Ошибка соединения WebSocket перед переподключением: {e}")
+        except websockets.exceptions.ConnectionClosedOK as e:
+            logger.info(f"[{BINANCE_EXCHANGE_NAME}] WebSocket соединение закрыто штатно. Код: {e.code}, Причина: {e.reason}")
+        except (websockets.exceptions.ConnectionClosedError, ConnectionRefusedError, OSError, asyncio.TimeoutError) as e:
+            logger.error(f"[{BINANCE_EXCHANGE_NAME}] Ошибка/таймаут соединения WebSocket: {e}")
         except Exception as e:
-            logger.error(
-                f"[{BINANCE_EXCHANGE_NAME}] Непредвиденная ошибка в binance_client перед переподключением: {e}",
-                exc_info=True
-            )
+            logger.error(f"[{BINANCE_EXCHANGE_NAME}] Непредвиденная ошибка в binance_client: {e}", exc_info=True)
 
         logger.info(f"[{BINANCE_EXCHANGE_NAME}] Попытка переподключения через 10 секунд...")
         await asyncio.sleep(10)

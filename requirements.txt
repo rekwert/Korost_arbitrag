@@ -1,5 +1,6 @@
 websockets
-python-dotenv
-aiohttp
+redis[hiredis]>=5.0.0  # Добавили Redis с быстрым парсером
 streamlit
 streamlit-autorefresh
+pandas
+aiohttp
