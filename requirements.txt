@@ -1,3 +1,5 @@
 websockets
 python-dotenv
 aiohttp
+streamlit
+streamlit-autorefresh

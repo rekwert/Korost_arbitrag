@@ -5,7 +5,7 @@ import time
 from decimal import Decimal, InvalidOperation
 
 import websockets
-import aiohttp # Добавили для REST запроса
+import aiohttp
 from websockets.client import WebSocketClientProtocol
 
 from models import TickerData
@@ -40,7 +40,7 @@ def format_symbol_to_kucoin(symbol: str) -> str:
     else:
          # Простая эвристика для других пар (может быть неточной)
          # Ищем известные базовые валюты
-         known_bases = ["BTC", "ETH", "LTC", "XRP"] # Дополнить по необходимости
+         known_bases = ["BTC","ETH", "BNB", "XRP","SOL"] # Дополнить по необходимости
          for base in known_bases:
               if symbol.startswith(base):
                    quote = symbol[len(base):]

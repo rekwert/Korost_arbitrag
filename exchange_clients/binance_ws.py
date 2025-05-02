@@ -1,6 +1,3 @@
-# exchange_clients/binance_ws.py
-
-# Standard Library
 import asyncio
 import json
 import logging
