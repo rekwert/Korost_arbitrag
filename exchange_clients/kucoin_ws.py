@@ -232,17 +232,18 @@ async def kucoin_pinger(websocket: WebSocketClientProtocol, interval_ms: int):
             await asyncio.sleep(5)
 
 
-async def kucoin_client(symbols: list[str]):
+async def kucoin_client(symbols: list[str], session: aiohttp.ClientSession):
     """Основной клиент WebSocket для KuCoin."""
     logger.info(f"[{KUCOIN_EXCHANGE_NAME}] Инициализация клиента KuCoin...")
-    session = None
+    # session = None # <-- УДАЛЕНО
     try:
-        session = aiohttp.ClientSession()
+        # session = aiohttp.ClientSession() # <-- УДАЛЕНО
+
         while True:
             ping_task = None
             try:
                 logger.info(f"[{KUCOIN_EXCHANGE_NAME}] Запрос данных для нового WebSocket соединения...")
-                ws_details = await get_kucoin_ws_details(session)
+                ws_details = await get_kucoin_ws_details(session) # <-- Используем переданную сессию
                 if not ws_details:
                     logger.warning(f"[{KUCOIN_EXCHANGE_NAME}] Не получены данные WS, повтор через 30 сек...")
                     await asyncio.sleep(30)
@@ -265,14 +266,10 @@ async def kucoin_client(symbols: list[str]):
                     await subscribe_kucoin(websocket, symbols)
                     await handle_kucoin_messages(websocket)
 
-            except websockets.exceptions.ConnectionClosedOK as e:
-                logger.info(f"[{KUCOIN_EXCHANGE_NAME}] Соединение закрыто штатно. Код: {e.code}, Причина: {e.reason}")
-            except websockets.exceptions.ConnectionClosedError as e:
-                 logger.error(f"[{KUCOIN_EXCHANGE_NAME}] Соединение закрыто с ошибкой. Код: {e.code}, Причина: {e.reason}")
-            except (ConnectionRefusedError, OSError, asyncio.TimeoutError) as e:
-                logger.error(f"[{KUCOIN_EXCHANGE_NAME}] Ошибка/таймаут соединения WebSocket: {e}")
-            except Exception as e:
-                logger.error(f"[{KUCOIN_EXCHANGE_NAME}] Ошибка в цикле подключения/обработки KuCoin: {e}", exc_info=True)
+            except websockets.exceptions.ConnectionClosedOK as e: logger.info(f"[{KUCOIN_EXCHANGE_NAME}] Соединение закрыто штатно. Код: {e.code}, Причина: {e.reason}")
+            except websockets.exceptions.ConnectionClosedError as e: logger.error(f"[{KUCOIN_EXCHANGE_NAME}] Соединение закрыто с ошибкой. Код: {e.code}, Причина: {e.reason}")
+            except (ConnectionRefusedError, OSError, asyncio.TimeoutError) as e: logger.error(f"[{KUCOIN_EXCHANGE_NAME}] Ошибка/таймаут соединения WebSocket: {e}")
+            except Exception as e: logger.error(f"[{KUCOIN_EXCHANGE_NAME}] Ошибка в цикле подключения/обработки KuCoin: {e}", exc_info=True)
             finally:
                 if ping_task and not ping_task.done():
                     logger.info(f"[{KUCOIN_EXCHANGE_NAME}] Отмена задачи пингера...")
@@ -288,6 +285,5 @@ async def kucoin_client(symbols: list[str]):
     except Exception as e:
          logger.critical(f"[{KUCOIN_EXCHANGE_NAME}] Критическая ошибка в kucoin_client: {e}", exc_info=True)
     finally:
-        if session and not session.closed:
-            await session.close()
-            logger.info(f"[{KUCOIN_EXCHANGE_NAME}] Сессия aiohttp закрыта.")
+        # Сессию здесь НЕ закрываем, она закроется в main.py
+        logger.info(f"[{KUCOIN_EXCHANGE_NAME}] Завершение работы клиента KuCoin.")
