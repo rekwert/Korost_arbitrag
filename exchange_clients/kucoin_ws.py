@@ -29,7 +29,7 @@ def format_symbol_to_kucoin(symbol: str) -> str | None:
         if symbol.endswith("ETH"): return f"{symbol[:-3]}-ETH"
         if symbol.endswith("KCS"): return f"{symbol[:-3]}-KCS"
         # Простая эвристика для других пар (может потребовать доработки)
-        known_bases = ["BTC", "ETH", "LTC", "XRP", "ADA", "SOL", "DOT", "MATIC", "LINK", "DOGE"]
+        known_bases = ["BTC", "ETH", "LTC", "XRP", "ADA", "SOL", "DOT", "MATIC", "LINK", "DOGE","AVAX", "NEAR", "UNI", "TRX", "FTM", "BNB"]
         for base in known_bases:
              if symbol.startswith(base):
                   quote = symbol[len(base):]
