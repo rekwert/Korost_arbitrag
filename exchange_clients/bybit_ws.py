@@ -87,16 +87,22 @@ async def handle_bybit_messages(websocket: WebSocketClientProtocol):
                     best_bid_list = orderbook_data.get("b", [])
                     best_ask_price = None
                     best_bid_price = None
+                    best_ask_size = None # <-- Добавили
+                    best_bid_size = None # <-- Добавили
 
                     try:
-                        if best_ask_list: best_ask_price = Decimal(best_ask_list[0][0])
-                        if best_bid_list: best_bid_price = Decimal(best_bid_list[0][0])
+                        if best_ask_list:
+                            best_ask_price = Decimal(best_ask_list[0][0])
+                            best_ask_size = Decimal(best_ask_list[0][1]) # <-- Извлекаем размер
+                        if best_bid_list:
+                            best_bid_price = Decimal(best_bid_list[0][0])
+                            best_bid_size = Decimal(best_bid_list[0][1]) # <-- Извлекаем размер
                     except (IndexError, InvalidOperation, TypeError) as e:
-                        logger.warning(f"[{BYBIT_EXCHANGE_NAME}][{symbol}] Ошибка извлечения bid/ask: {e}")
-                        continue # Пропускаем это обновление, если цены не извлечь
+                        logger.warning(f"[{BYBIT_EXCHANGE_NAME}][{symbol}] Ошибка извлечения bid/ask/size: {e}")
+                        continue
 
                     if best_bid_price is None or best_ask_price is None:
-                        logger.warning(f"[{BYBIT_EXCHANGE_NAME}][{symbol}] Отсутствуют bid или ask после парсинга: B={best_bid_price}, A={best_ask_price}")
+                        logger.warning(f"[{BYBIT_EXCHANGE_NAME}][{symbol}] Отсутствуют bid/ask после парсинга: B={best_bid_price}, A={best_ask_price}")
                         continue
 
                     # Создаем объект TickerData
@@ -106,7 +112,9 @@ async def handle_bybit_messages(websocket: WebSocketClientProtocol):
                         timestamp_ms=int(data.get("ts", 0)),
                         bid_price=best_bid_price,
                         ask_price=best_ask_price,
-                        last_price=None # Стакан не дает last_price
+                        bid_size=best_bid_size,  # <-- Добавили
+                        ask_size=best_ask_size,  # <-- Добавили
+                        last_price=None
                     )
 
                     # Отправляем в Redis

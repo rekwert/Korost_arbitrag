@@ -152,10 +152,16 @@ async def handle_kucoin_messages(websocket: WebSocketClientProtocol):
                             best_ask = ticker_data.get("bestAsk")
                             last_price = ticker_data.get("price")
                             timestamp_ms = ticker_data.get("time")
+                            # Извлекаем размеры
+                            best_bid_size_str = ticker_data.get("bestBidSize") # <-- Добавили
+                            best_ask_size_str = ticker_data.get("bestAskSize") # <-- Добавили
 
                             bid_price = Decimal(best_bid) if best_bid else None
                             ask_price = Decimal(best_ask) if best_ask else None
                             last_p = Decimal(last_price) if last_price else None
+                            # Конвертируем размеры
+                            bid_size = Decimal(best_bid_size_str) if best_bid_size_str else None # <-- Добавили
+                            ask_size = Decimal(best_ask_size_str) if best_ask_size_str else None # <-- Добавили
 
                             if bid_price is None or ask_price is None:
                                 logger.warning(f"[{KUCOIN_EXCHANGE_NAME}][{symbol}] Отсутствуют bid/ask: {ticker_data}")
@@ -168,9 +174,10 @@ async def handle_kucoin_messages(websocket: WebSocketClientProtocol):
                                 timestamp_ms=int(timestamp_ms) if timestamp_ms else 0,
                                 bid_price=bid_price,
                                 ask_price=ask_price,
+                                bid_size=bid_size,  # <-- Добавили
+                                ask_size=ask_size,  # <-- Добавили
                                 last_price=last_p
                             )
-
                             # Отправляем в Redis
                             await data_store.update_ticker_in_redis(ticker_obj)
 
