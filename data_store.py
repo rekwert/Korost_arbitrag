@@ -62,6 +62,8 @@ async def update_ticker_in_redis(ticker: TickerData):
             "ask_price": str(ticker.ask_price) if ticker.ask_price is not None else "",
             "last_price": str(ticker.last_price) if ticker.last_price is not None else "",
             "timestamp_ms": str(ticker.timestamp_ms) if ticker.timestamp_ms is not None else "0",
+            "bid_size": str(ticker.bid_size) if ticker.bid_size is not None else "", # <-- Добавили
+            "ask_size": str(ticker.ask_size) if ticker.ask_size is not None else "", # <-- Добавили
         }
 
         # --- ИЗМЕНЕНИЕ: Устанавливаем поля по одному ---
@@ -147,14 +149,17 @@ def get_all_tickers_sync(exchanges: List[str], symbols: List[str]) -> Dict[str, 
                 ask_str = ticker_hash_data.get("ask_price", "")
                 last_str = ticker_hash_data.get("last_price", "")
                 ts_str = ticker_hash_data.get("timestamp_ms", "0")
+                bid_size_str = ticker_hash_data.get("bid_size", "") # <-- Добавили
+                ask_size_str = ticker_hash_data.get("ask_size", "") # <-- Добавили
 
                 ticker = TickerData(
-                    exchange=ex_name,
-                    symbol=symbol,
+                    exchange=ex_name, symbol=symbol,
                     bid_price=Decimal(bid_str) if bid_str else None,
                     ask_price=Decimal(ask_str) if ask_str else None,
                     last_price=Decimal(last_str) if last_str else None,
                     timestamp_ms=int(ts_str) if ts_str else 0,
+                    bid_size=Decimal(bid_size_str) if bid_size_str else None, # <-- Добавили
+                    ask_size=Decimal(ask_size_str) if ask_size_str else None, # <-- Добавили
                 )
                 all_tickers_data[ex_name][symbol] = ticker
             except (InvalidOperation, ValueError, TypeError) as e:

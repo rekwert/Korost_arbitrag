@@ -53,10 +53,12 @@ async def handle_binance_messages(websocket: WebSocketClientProtocol):
                 try:
                     bid_price = Decimal(stream_data.get("b")) if stream_data.get("b") else None
                     ask_price = Decimal(stream_data.get("a")) if stream_data.get("a") else None
-                    timestamp_ms = int(time.time() * 1000) # Локальное время
+                    bid_size = Decimal(stream_data.get("B")) if stream_data.get("B") else None # <-- Добавили
+                    ask_size = Decimal(stream_data.get("A")) if stream_data.get("A") else None # <-- Добавили
+                    timestamp_ms = int(time.time() * 1000)
 
                     if bid_price is None or ask_price is None:
-                         logger.warning(f"[{BINANCE_EXCHANGE_NAME}][{symbol}] Отсутствуют bid/ask в данных bookTicker: {stream_data}")
+                         logger.warning(f"[{BINANCE_EXCHANGE_NAME}][{symbol}] Отсутствуют bid/ask: {stream_data}")
                          continue
 
                     # Создаем объект TickerData
@@ -66,6 +68,8 @@ async def handle_binance_messages(websocket: WebSocketClientProtocol):
                         timestamp_ms=timestamp_ms,
                         bid_price=bid_price,
                         ask_price=ask_price,
+                        bid_size=bid_size, # <-- Добавили
+                        ask_size=ask_size, # <-- Добавили
                         last_price=None
                     )
 

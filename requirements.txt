@@ -4,3 +4,5 @@ streamlit
 streamlit-autorefresh
 pandas
 aiohttp
+matplotlib
+numpy
